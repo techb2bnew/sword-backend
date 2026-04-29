@@ -9,6 +9,8 @@ const inventoryRoutes = require("./routes/inventory");
 const warehouseRoutes = require("./routes/warehouse");
 const salesRoutes = require("./routes/sales");
 const reportingRoutes = require("./routes/reporting");
+const purchaseRoutes = require("./routes/purchases");
+const transportRoutes = require("./routes/transport");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -32,6 +34,8 @@ app.use("/api/inventory", inventoryRoutes); // Using this for products
 app.use("/api/warehouse", warehouseRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/reporting", reportingRoutes);
+app.use("/api/purchases", purchaseRoutes);
+app.use("/api/transport", transportRoutes);
 
 app.use((req, res) => {
   console.log(`404: ${req.method} ${req.url}`);
