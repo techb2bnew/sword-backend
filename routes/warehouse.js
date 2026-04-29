@@ -60,6 +60,116 @@ router.post("/bins", async (req, res) => {
   }
 });
 
+router.post("/bins/bulk", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { warehouse_id, rack_code, bin_count } = req.body;
+    await client.query("BEGIN");
+    for (let i = 1; i <= bin_count; i++) {
+      const binCode = `B-${i.toString().padStart(2, '0')}`;
+      await client.query(
+        "INSERT INTO bins (warehouse_id, rack_code, bin_code) VALUES ($1, $2, $3)",
+        [warehouse_id, rack_code, binCode]
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ message: `Rack ${rack_code} with ${bin_count} bins created.` });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete("/bins/rack/:warehouse_id/:rack_code", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { warehouse_id, rack_code } = req.params;
+    await client.query("BEGIN");
+    
+    // Check if any bin in this rack is occupied
+    const occupied = await client.query(
+      "SELECT id FROM bins WHERE warehouse_id = $1 AND rack_code = $2 AND status = 'Occupied'",
+      [warehouse_id, rack_code]
+    );
+
+    if (occupied.rows.length > 0) {
+      throw new Error("Cannot delete rack: Some bins are currently occupied.");
+    }
+
+    await client.query(
+      "DELETE FROM bins WHERE warehouse_id = $1 AND rack_code = $2",
+      [warehouse_id, rack_code]
+    );
+    
+    await client.query("COMMIT");
+    res.json({ message: `Rack ${rack_code} deleted successfully.` });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.put("/bins/rack/:warehouse_id/:old_code", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { warehouse_id, old_code } = req.params;
+    const { new_code, bin_count } = req.body;
+    await client.query("BEGIN");
+
+    // 1. Rename if needed
+    if (new_code && new_code !== old_code) {
+      await client.query(
+        "UPDATE bins SET rack_code = $1 WHERE warehouse_id = $2 AND rack_code = $3",
+        [new_code, warehouse_id, old_code]
+      );
+    }
+
+    const currentCode = new_code || old_code;
+
+    // 2. Adjust Bin Count if provided
+    if (bin_count) {
+      const currentBins = await client.query(
+        "SELECT * FROM bins WHERE warehouse_id = $1 AND rack_code = $2 ORDER BY bin_code ASC",
+        [warehouse_id, currentCode]
+      );
+      const currentCount = currentBins.rows.length;
+
+      if (bin_count > currentCount) {
+        // Add more bins
+        for (let i = currentCount + 1; i <= bin_count; i++) {
+          const binCode = `B-${i.toString().padStart(2, '0')}`;
+          await client.query(
+            "INSERT INTO bins (warehouse_id, rack_code, bin_code) VALUES ($1, $2, $3)",
+            [warehouse_id, currentCode, binCode]
+          );
+        }
+      } else if (bin_count < currentCount) {
+        // Remove trailing bins (only if empty)
+        const binsToDelete = currentBins.rows.slice(bin_count);
+        for (const bin of binsToDelete) {
+          if (bin.status === 'Occupied') {
+            throw new Error(`Cannot reduce bin count: Bin ${bin.bin_code} is occupied.`);
+          }
+        }
+        const idsToDelete = binsToDelete.map(b => b.id);
+        await client.query("DELETE FROM bins WHERE id = ANY($1)", [idsToDelete]);
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "Rack updated successfully." });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Stock Movements (Updated for Bins)
 router.get("/movements", async (req, res) => {
   try {
