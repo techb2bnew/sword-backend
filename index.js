@@ -11,6 +11,7 @@ const salesRoutes = require("./routes/sales");
 const reportingRoutes = require("./routes/reporting");
 const purchaseRoutes = require("./routes/purchases");
 const transportRoutes = require("./routes/transport");
+const quotationsRoutes = require("./routes/quotations");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -19,7 +20,9 @@ app.use(cors());
 app.use(express.json());
 
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  res.on('finish', () => {
+    console.log(`${req.method} ${req.url} - ${res.statusCode}`);
+  });
   next();
 });
 
@@ -36,6 +39,7 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/reporting", reportingRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/transport", transportRoutes);
+app.use("/api/quotations", quotationsRoutes);
 
 app.use((req, res) => {
   console.log(`404: ${req.method} ${req.url}`);
@@ -45,3 +49,5 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+setInterval(() => {}, 10000);

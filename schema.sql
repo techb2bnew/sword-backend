@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(100) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role VARCHAR(20) DEFAULT 'staff',
+    supplier_id INTEGER REFERENCES suppliers(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -71,4 +72,18 @@ CREATE TABLE IF NOT EXISTS shipments (
     dispatch_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     estimated_delivery TIMESTAMP,
     status VARCHAR(20) DEFAULT 'Pending' -- Pending, In Transit, Delivered, Cancelled
+);
+
+-- Quotations Table
+CREATE TABLE IF NOT EXISTS quotations (
+    id SERIAL PRIMARY KEY,
+    supplier_id INTEGER REFERENCES suppliers(id),
+    product_id INTEGER REFERENCES products(id),
+    quantity INTEGER NOT NULL,
+    unit_price DECIMAL(10, 2) NOT NULL,
+    total_amount DECIMAL(15, 2) NOT NULL,
+    valid_until DATE,
+    status VARCHAR(20) DEFAULT 'Pending', -- Pending, Accepted, Rejected, Expired
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

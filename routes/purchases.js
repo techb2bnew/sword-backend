@@ -1,11 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { authenticate } = require("../middleware/auth");
 
 // --- Suppliers ---
 
 // Get all suppliers
-router.get("/suppliers", async (req, res) => {
+router.get("/suppliers", authenticate, async (req, res) => {
   try {
     const suppliers = await pool.query("SELECT * FROM suppliers ORDER BY id DESC");
     res.json(suppliers.rows);
@@ -16,7 +17,7 @@ router.get("/suppliers", async (req, res) => {
 });
 
 // Add a supplier
-router.post("/suppliers", async (req, res) => {
+router.post("/suppliers", authenticate, async (req, res) => {
   try {
     const { name, contact_person, email, phone, address } = req.body;
     const newSupplier = await pool.query(
@@ -61,7 +62,7 @@ router.delete("/suppliers/:id", async (req, res) => {
 // --- Purchase Orders ---
 
 // Get all purchase orders
-router.get("/orders", async (req, res) => {
+router.get("/orders", authenticate, async (req, res) => {
   try {
     const orders = await pool.query(`
       SELECT po.*, s.name as supplier_name 

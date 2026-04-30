@@ -1,9 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { authenticate } = require("../middleware/auth");
 
 // Warehouses
-router.get("/", async (req, res) => {
+router.get("/", authenticate, async (req, res) => {
   try {
     const warehouses = await pool.query("SELECT * FROM warehouses ORDER BY id DESC");
     res.json(warehouses.rows);
@@ -12,7 +13,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", authenticate, async (req, res) => {
   try {
     const { name, location, capacity_sqft, manager_name } = req.body;
     const newWarehouse = await pool.query(
@@ -26,7 +27,7 @@ router.post("/", async (req, res) => {
 });
 
 // Bins
-router.get("/bins", async (req, res) => {
+router.get("/bins", authenticate, async (req, res) => {
   try {
     const { warehouse_id } = req.query;
     let query = `
