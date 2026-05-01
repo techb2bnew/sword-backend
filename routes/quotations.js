@@ -7,10 +7,15 @@ const { authenticate } = require("../middleware/auth");
 router.get("/", authenticate, async (req, res) => {
   try {
     let query = `
-      SELECT q.*, s.name as supplier_name, p.name as product_name 
+      SELECT q.*, s.name as supplier_name, p.name as product_name,
+             wa.barcode_id, wa.allocated_at, wa.status as allocation_status,
+             w.name as warehouse_name, b.rack_code, b.bin_code
       FROM quotations q
       JOIN suppliers s ON q.supplier_id = s.id
       JOIN products p ON q.product_id = p.id
+      LEFT JOIN warehouse_allocations wa ON q.id = wa.quotation_id
+      LEFT JOIN warehouses w ON wa.warehouse_id = w.id
+      LEFT JOIN bins b ON wa.bin_id = b.id
     `;
     let params = [];
 
@@ -36,6 +41,8 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
+const { autoAllocateWarehouse } = require("../services/allocationService");
+
 // Create a new quotation (Supplier)
 router.post("/", authenticate, async (req, res) => {
   try {
@@ -43,7 +50,7 @@ router.post("/", authenticate, async (req, res) => {
       return res.status(403).json({ error: "Only suppliers can create quotations" });
     }
 
-    const { product_id, quantity, unit_price, valid_until, expected_delivery, notes } = req.body;
+    const { product_id, quantity, unit_price, valid_until, expected_delivery, notes, credit_days } = req.body;
     let supplier_id = req.body.supplier_id;
 
     if (req.user.role === 'supplier') {
@@ -59,9 +66,9 @@ router.post("/", authenticate, async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO quotations 
-      (supplier_id, product_id, quantity, unit_price, total_amount, valid_until, expected_delivery, notes) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [supplier_id, product_id, quantity, unit_price, total_amount, valid_until, expected_delivery, notes]
+      (supplier_id, product_id, quantity, unit_price, total_amount, valid_until, expected_delivery, notes, credit_days) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [supplier_id, product_id, quantity, unit_price, total_amount, valid_until, expected_delivery, notes, credit_days || 0]
     );
 
     res.status(201).json(result.rows[0]);
@@ -81,12 +88,21 @@ router.put("/:id/status", authenticate, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const result = await pool.query(
-      "UPDATE quotations SET status = $1 WHERE id = $2 RETURNING *",
-      [status, id]
-    );
-
-    res.json(result.rows[0]);
+    if (status === 'Accepted') {
+      // Trigger Auto Allocation
+      try {
+        const allocation = await autoAllocateWarehouse(id);
+        res.json({ message: "Quotation accepted and warehouse allocated", ...allocation });
+      } catch (err) {
+        res.status(400).json({ error: err.message });
+      }
+    } else {
+      const result = await pool.query(
+        "UPDATE quotations SET status = $1 WHERE id = $2 RETURNING *",
+        [status, id]
+      );
+      res.json(result.rows[0]);
+    }
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Server error" });

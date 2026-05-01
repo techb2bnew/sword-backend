@@ -8,8 +8,7 @@ const { authenticate } = require("../middleware/auth");
 router.post("/products", authenticate, async (req, res) => {
   try {
     const { name, price, barcode, stock, type, uom, warehouse_id, bin_id } = req.body;
-    let supplier_id = null;
-    
+    let supplier_id = req.body.supplier_id || null;
 
     if (req.user.role === 'supplier') {
         const userResult = await pool.query("SELECT supplier_id FROM users WHERE id = $1", [req.user.id]);
@@ -28,28 +27,33 @@ router.post("/products", authenticate, async (req, res) => {
 
 router.get("/products", authenticate, async (req, res) => {
   try {
-    let query = `
-      SELECT p.*, w.name as warehouse_name, b.rack_code, b.bin_code, s.name as supplier_name
-      FROM products p
-      LEFT JOIN warehouses w ON p.warehouse_id = w.id
-      LEFT JOIN bins b ON p.bin_id = b.id
-      LEFT JOIN suppliers s ON p.supplier_id = s.id
-    `;
     let params = [];
+    let whereClause = "";
 
     if (req.user.role === 'supplier') {
       const userResult = await pool.query("SELECT supplier_id FROM users WHERE id = $1", [req.user.id]);
       const supplierId = userResult.rows[0].supplier_id;
       
       if (supplierId) {
-        query += " WHERE p.supplier_id = $1";
+        whereClause = " WHERE p.supplier_id = $1";
         params.push(supplierId);
       } else {
         return res.status(403).json({ error: "Supplier profile not found for this user" });
       }
     }
 
-    query += " ORDER BY p.id DESC";
+    let query = `
+      SELECT p.*, w.name as warehouse_name, s.name as supplier_name,
+             STRING_AGG(DISTINCT b.rack_code || '-' || b.bin_code, ', ') as locations
+      FROM products p
+      LEFT JOIN warehouses w ON p.warehouse_id = w.id
+      LEFT JOIN bins b ON (b.id = p.bin_id OR b.id IN (SELECT bin_id FROM warehouse_allocations WHERE product_id = p.id AND status = 'allocated'))
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      ${whereClause}
+      GROUP BY p.id, w.name, s.name
+      ORDER BY p.id DESC
+    `;
+
     const products = await pool.query(query, params);
     res.json(products.rows);
   } catch (err) {
@@ -60,10 +64,10 @@ router.get("/products", authenticate, async (req, res) => {
 router.put("/products/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, price, barcode, stock, type, uom, warehouse_id, bin_id } = req.body;
+    const { name, price, barcode, stock, type, uom, warehouse_id, bin_id, supplier_id } = req.body;
     const update = await pool.query(
-      "UPDATE products SET name = $1, price = $2, barcode = $3, stock = $4, type = $5, uom = $6, warehouse_id = $7, bin_id = $8 WHERE id = $9 RETURNING *",
-      [name, price, barcode, stock, type, uom, warehouse_id || null, bin_id || null, id]
+      "UPDATE products SET name = $1, price = $2, barcode = $3, stock = $4, type = $5, uom = $6, warehouse_id = $7, bin_id = $8, supplier_id = $9 WHERE id = $10 RETURNING *",
+      [name, price, barcode, stock, type, uom, warehouse_id || null, bin_id || null, supplier_id || null, id]
     );
     if (bin_id) {
         await pool.query("UPDATE bins SET status = 'Occupied' WHERE id = $1", [bin_id]);

@@ -31,9 +31,16 @@ router.get("/bins", authenticate, async (req, res) => {
   try {
     const { warehouse_id } = req.query;
     let query = `
-      SELECT b.*, p.name as product_name, p.stock as product_stock, p.uom, p.barcode
+      SELECT b.*, 
+             COALESCE(p.name, p2.name) as product_name, 
+             COALESCE(p.stock, 0) as product_stock, 
+             COALESCE(p.uom, p2.uom) as uom, 
+             p.barcode
       FROM bins b
       LEFT JOIN products p ON b.id = p.bin_id
+      LEFT JOIN warehouse_allocations wa ON b.id = wa.bin_id AND wa.status = 'allocated'
+      LEFT JOIN quotations q ON wa.quotation_id = q.id
+      LEFT JOIN products p2 ON q.product_id = p2.id
     `;
     let params = [];
     if (warehouse_id) {
@@ -64,13 +71,13 @@ router.post("/bins", async (req, res) => {
 router.post("/bins/bulk", async (req, res) => {
   const client = await pool.connect();
   try {
-    const { warehouse_id, rack_code, bin_count } = req.body;
+    const { warehouse_id, rack_code, bin_count, capacity, category } = req.body;
     await client.query("BEGIN");
     for (let i = 1; i <= bin_count; i++) {
       const binCode = `B-${i.toString().padStart(2, '0')}`;
       await client.query(
-        "INSERT INTO bins (warehouse_id, rack_code, bin_code) VALUES ($1, $2, $3)",
-        [warehouse_id, rack_code, binCode]
+        "INSERT INTO bins (warehouse_id, rack_code, bin_code, capacity, category) VALUES ($1, $2, $3, $4, $5)",
+        [warehouse_id, rack_code, binCode, capacity || 100, category || null]
       );
     }
     await client.query("COMMIT");
@@ -89,14 +96,14 @@ router.delete("/bins/rack/:warehouse_id/:rack_code", async (req, res) => {
     const { warehouse_id, rack_code } = req.params;
     await client.query("BEGIN");
     
-    // Check if any bin in this rack is occupied
+    // Check if any bin in this rack is occupied or reserved
     const occupied = await client.query(
-      "SELECT id FROM bins WHERE warehouse_id = $1 AND rack_code = $2 AND status = 'Occupied'",
+      "SELECT id, status FROM bins WHERE warehouse_id = $1 AND rack_code = $2 AND status IN ('Occupied', 'Reserved')",
       [warehouse_id, rack_code]
     );
 
     if (occupied.rows.length > 0) {
-      throw new Error("Cannot delete rack: Some bins are currently occupied.");
+      throw new Error("Cannot delete rack: Some bins are currently Occupied or Reserved.");
     }
 
     await client.query(

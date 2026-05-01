@@ -40,6 +40,10 @@ app.use("/api/reporting", reportingRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/transport", transportRoutes);
 app.use("/api/quotations", quotationsRoutes);
+app.use("/api/notifications", require("./routes/notifications"));
+
+const { startNotificationJob } = require("./jobs/notificationJob");
+startNotificationJob();
 
 app.use((req, res) => {
   console.log(`404: ${req.method} ${req.url}`);
