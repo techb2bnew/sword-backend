@@ -42,11 +42,33 @@ router.get("/shipments", async (req, res) => {
 
 router.post("/shipments", async (req, res) => {
   try {
-    const { order_id, vehicle_id, route_details, estimated_delivery } = req.body;
+    const { 
+      order_id, 
+      vehicle_id, 
+      route_details, 
+      estimated_delivery,
+      origin_lat,
+      origin_lng,
+      dest_lat,
+      dest_lng,
+      origin_name,
+      dest_name,
+      distance_km
+    } = req.body;
+
     const newShipment = await pool.query(
-      "INSERT INTO shipments (order_id, vehicle_id, route_details, estimated_delivery) VALUES ($1, $2, $3, $4) RETURNING *",
-      [order_id, vehicle_id, route_details, estimated_delivery]
+      `INSERT INTO shipments (
+        order_id, vehicle_id, route_details, estimated_delivery, 
+        origin_lat, origin_lng, dest_lat, dest_lng, 
+        origin_name, dest_name, distance_km
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [
+        order_id, vehicle_id, route_details, estimated_delivery,
+        origin_lat, origin_lng, dest_lat, dest_lng,
+        origin_name, dest_name, distance_km
+      ]
     );
+    
     // Update vehicle status
     await pool.query("UPDATE vehicles SET status = 'On Trip' WHERE id = $1", [vehicle_id]);
     res.json(newShipment.rows[0]);

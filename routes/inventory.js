@@ -9,6 +9,7 @@ router.post("/products", authenticate, async (req, res) => {
   try {
     const { name, price, barcode, stock, type, uom, warehouse_id, bin_id } = req.body;
     let supplier_id = null;
+    
 
     if (req.user.role === 'supplier') {
         const userResult = await pool.query("SELECT supplier_id FROM users WHERE id = $1", [req.user.id]);
