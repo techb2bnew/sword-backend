@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const { authenticate } = require("../middleware/auth");
 
-const formatCurrency = (amount) => `₹${parseFloat(amount).toLocaleString('en-IN')}`;
+const formatCurrency = (amount) => `£${parseFloat(amount).toLocaleString('en-IN')}`;
 
 // GET /api/finance/stats - Aggregated stats
 router.get("/stats", authenticate, async (req, res) => {

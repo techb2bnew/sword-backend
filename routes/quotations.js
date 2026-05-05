@@ -48,7 +48,7 @@ router.get("/", authenticate, async (req, res) => {
 // Create a new quotation (Supplier)
 router.post("/", authenticate, async (req, res) => {
   try {
-    if (req.user.role !== 'supplier' && req.user.role !== 'admin') {
+    if (req.user.role !== 'supplier' && req.user.role !== 'admin' && req.user.role !== 'buyer') {
       return res.status(403).json({ error: "Only suppliers can create quotations" });
     }
 

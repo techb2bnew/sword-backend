@@ -20,42 +20,46 @@ router.get("/suppliers", authenticate, async (req, res) => {
 router.post("/suppliers", authenticate, async (req, res) => {
   try {
     const { name, contact_person, email, phone, address } = req.body;
+    if (!name) return res.status(400).json({ error: "Supplier name is required" });
     const newSupplier = await pool.query(
       "INSERT INTO suppliers (name, contact_person, email, phone, address) VALUES ($1, $2, $3, $4, $5) RETURNING *",
       [name, contact_person, email, phone, address]
     );
-    res.json(newSupplier.rows[0]);
+    res.status(201).json(newSupplier.rows[0]);
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // Update a supplier
-router.put("/suppliers/:id", async (req, res) => {
+router.put("/suppliers/:id", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, contact_person, email, phone, address } = req.body;
+    if (!name) return res.status(400).json({ error: "Supplier name is required" });
     const update = await pool.query(
       "UPDATE suppliers SET name = $1, contact_person = $2, email = $3, phone = $4, address = $5 WHERE id = $6 RETURNING *",
       [name, contact_person, email, phone, address, id]
     );
+    if (update.rows.length === 0) return res.status(404).json({ error: "Supplier not found" });
     res.json(update.rows[0]);
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // Delete a supplier
-router.delete("/suppliers/:id", async (req, res) => {
+router.delete("/suppliers/:id", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
-    await pool.query("DELETE FROM suppliers WHERE id = $1", [id]);
-    res.json({ message: "Supplier deleted" });
+    const result = await pool.query("DELETE FROM suppliers WHERE id = $1 RETURNING id", [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Supplier not found" });
+    res.json({ message: "Supplier deleted successfully" });
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 

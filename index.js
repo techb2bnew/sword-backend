@@ -14,6 +14,8 @@ const transportRoutes = require("./routes/transport");
 const quotationsRoutes = require("./routes/quotations");
 const customerRoutes = require("./routes/customers");
 const customerOrdersRoutes = require("./routes/customer_orders");
+const buyersRoutes = require("./routes/buyers");
+const buyerQuotationsRoutes = require("./routes/buyerQuotations");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -45,6 +47,8 @@ app.use("/api/quotations", quotationsRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/customer-orders", customerOrdersRoutes);
 app.use("/api/notifications", require("./routes/notifications"));
+app.use("/api/buyers", buyersRoutes);
+app.use("/api/buyer-quotations", buyerQuotationsRoutes);
 
 const { startNotificationJob } = require("./jobs/notificationJob");
 startNotificationJob();

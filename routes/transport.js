@@ -43,6 +43,10 @@ router.post("/vehicles", authenticate, async (req, res) => {
       assigned_warehouse_id, status 
     } = req.body;
 
+    if (!vehicle_number || !driver_name || !capacity_kg) {
+      return res.status(400).json({ error: "vehicle_number, driver_name, and capacity_kg are required" });
+    }
+
     const result = await pool.query(
       `INSERT INTO vehicles (
         vehicle_number, vehicle_type, capacity_kg, capacity_volume, 
@@ -50,13 +54,14 @@ router.post("/vehicles", authenticate, async (req, res) => {
         assigned_warehouse_id, status
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [
-        vehicle_number, vehicle_type, capacity_kg || 0, capacity_volume || 0, 
+        vehicle_number, vehicle_type || 'Truck', capacity_kg || 0, capacity_volume || 0, 
         driver_name, driver_phone, current_latitude, current_longitude, 
         assigned_warehouse_id, status || 'available'
       ]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    console.error("Vehicle creation error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
