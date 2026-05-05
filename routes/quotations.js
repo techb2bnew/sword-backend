@@ -2,46 +2,48 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { authenticate } = require("../middleware/auth");
+const { autoAllocateWarehouse } = require("../services/allocationService");
 
 // Get all quotations (Admin view or specific supplier)
 router.get("/", authenticate, async (req, res) => {
   try {
+    let whereClause = "";
+    let params = [];
+
+    if (req.user.role === 'supplier') {
+      const userResult = await pool.query("SELECT supplier_id FROM users WHERE id = $1", [req.user.id]);
+      const supplierId = userResult.rows[0].supplier_id;
+      if (!supplierId) return res.status(403).json({ error: "User not linked to supplier" });
+      whereClause = "WHERE q.supplier_id = $1";
+      params.push(supplierId);
+    }
+
     let query = `
       SELECT q.*, s.name as supplier_name, p.name as product_name,
-             wa.barcode_id, wa.allocated_at, wa.status as allocation_status,
-             w.name as warehouse_name, b.rack_code, b.bin_code
+             JSON_AGG(JSON_BUILD_OBJECT(
+               'barcode_id', wa.barcode_id,
+               'warehouse_name', w.name,
+               'rack_code', b.rack_code,
+               'bin_code', b.bin_code,
+               'quantity', wa.quantity
+             )) FILTER (WHERE wa.id IS NOT NULL) as allocations
       FROM quotations q
       JOIN suppliers s ON q.supplier_id = s.id
       JOIN products p ON q.product_id = p.id
       LEFT JOIN warehouse_allocations wa ON q.id = wa.quotation_id
       LEFT JOIN warehouses w ON wa.warehouse_id = w.id
       LEFT JOIN bins b ON wa.bin_id = b.id
+      ${whereClause}
+      GROUP BY q.id, s.name, p.name
+      ORDER BY q.created_at DESC
     `;
-    let params = [];
 
-    if (req.user.role === 'supplier') {
-      // Find the supplier_id linked to this user
-      const userResult = await pool.query("SELECT supplier_id FROM users WHERE id = $1", [req.user.id]);
-      const supplierId = userResult.rows[0].supplier_id;
-      
-      if (!supplierId) {
-        return res.status(403).json({ error: "User is not linked to a supplier profile" });
-      }
-      
-      query += " WHERE q.supplier_id = $1";
-      params.push(supplierId);
-    }
-
-    query += " ORDER BY q.created_at DESC";
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
-
-const { autoAllocateWarehouse } = require("../services/allocationService");
 
 // Create a new quotation (Supplier)
 router.post("/", authenticate, async (req, res) => {
@@ -58,9 +60,7 @@ router.post("/", authenticate, async (req, res) => {
       supplier_id = userResult.rows[0].supplier_id;
     }
 
-    if (!supplier_id) {
-      return res.status(400).json({ error: "Supplier ID is required" });
-    }
+    if (!supplier_id) return res.status(400).json({ error: "Supplier ID is required" });
 
     const total_amount = quantity * unit_price;
 
@@ -73,26 +73,22 @@ router.post("/", authenticate, async (req, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // Update quotation status (Admin)
 router.put("/:id/status", authenticate, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: "Only admins can update quotation status" });
-    }
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Only admins can update status" });
 
     const { id } = req.params;
     const { status } = req.body;
 
     if (status === 'Accepted') {
-      // Trigger Auto Allocation
       try {
         const allocation = await autoAllocateWarehouse(id);
-        res.json({ message: "Quotation accepted and warehouse allocated", ...allocation });
+        res.json({ message: "Quotation accepted and allocated", ...allocation });
       } catch (err) {
         res.status(400).json({ error: err.message });
       }
@@ -104,8 +100,7 @@ router.put("/:id/status", authenticate, async (req, res) => {
       res.json(result.rows[0]);
     }
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message });
   }
 });
 

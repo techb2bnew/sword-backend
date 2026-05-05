@@ -15,12 +15,29 @@ router.get("/", authenticate, async (req, res) => {
 
 router.post("/", authenticate, async (req, res) => {
   try {
-    const { name, location, capacity_sqft, manager_name } = req.body;
+    const { name, location, capacity_sqft, manager_name, latitude, longitude, status } = req.body;
     const newWarehouse = await pool.query(
-      "INSERT INTO warehouses (name, location, capacity_sqft, manager_name) VALUES ($1, $2, $3, $4) RETURNING *",
-      [name, location, capacity_sqft, manager_name]
+      "INSERT INTO warehouses (name, location, capacity_sqft, manager_name, latitude, longitude, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+      [name, location, capacity_sqft, manager_name, latitude, longitude, status || 'active']
     );
     res.json(newWarehouse.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put("/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, location, capacity_sqft, manager_name, latitude, longitude, status } = req.body;
+    const update = await pool.query(
+      `UPDATE warehouses SET 
+        name = $1, location = $2, capacity_sqft = $3, manager_name = $4, 
+        latitude = $5, longitude = $6, status = $7 
+      WHERE id = $8 RETURNING *`,
+      [name, location, capacity_sqft, manager_name, latitude, longitude, status, id]
+    );
+    res.json(update.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -30,12 +47,16 @@ router.post("/", authenticate, async (req, res) => {
 router.get("/bins", authenticate, async (req, res) => {
   try {
     const { warehouse_id } = req.query;
+    // Grouping by bin to sum up multiple allocations in one physical space
     let query = `
       SELECT b.*, 
-             COALESCE(p.name, p2.name) as product_name, 
-             COALESCE(p.stock, 0) as product_stock, 
-             COALESCE(p.uom, p2.uom) as uom, 
-             p.barcode
+             COALESCE(MIN(p.name), MIN(p2.name)) as product_name, 
+             SUM(CASE 
+               WHEN b.status = 'Reserved' THEN COALESCE(q.quantity, p.stock, 0)
+               ELSE COALESCE(p.stock, q.quantity, 0)
+             END) as product_stock,
+             COALESCE(MIN(p.uom), MIN(p2.uom)) as uom, 
+             MIN(p.barcode) as barcode
       FROM bins b
       LEFT JOIN products p ON b.id = p.bin_id
       LEFT JOIN warehouse_allocations wa ON b.id = wa.bin_id AND wa.status = 'allocated'
@@ -47,7 +68,7 @@ router.get("/bins", authenticate, async (req, res) => {
       query += " WHERE b.warehouse_id = $1";
       params.push(warehouse_id);
     }
-    query += " ORDER BY b.rack_code, b.bin_code";
+    query += " GROUP BY b.id ORDER BY b.rack_code, b.bin_code";
     const bins = await pool.query(query, params);
     res.json(bins.rows);
   } catch (err) {

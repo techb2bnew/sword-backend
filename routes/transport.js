@@ -1,35 +1,112 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { authenticate } = require("../middleware/auth");
 
-// Vehicles
-router.get("/vehicles", async (req, res) => {
+// GET /api/transport/vehicles - List all vehicles
+router.get("/vehicles", authenticate, async (req, res) => {
   try {
-    const vehicles = await pool.query("SELECT * FROM vehicles ORDER BY id DESC");
+    const query = `
+      SELECT v.*, w.name as warehouse_name 
+      FROM vehicles v 
+      LEFT JOIN warehouses w ON v.assigned_warehouse_id = w.id 
+      ORDER BY v.id DESC
+    `;
+    const vehicles = await pool.query(query);
     res.json(vehicles.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post("/vehicles", async (req, res) => {
+// GET /api/transport/vehicles/:id - Get single vehicle details
+router.get("/vehicles/:id", authenticate, async (req, res) => {
   try {
-    const { plate_number, vehicle_type, capacity, driver_name } = req.body;
-    const newVehicle = await pool.query(
-      "INSERT INTO vehicles (plate_number, vehicle_type, capacity, driver_name) VALUES ($1, $2, $3, $4) RETURNING *",
-      [plate_number, vehicle_type, capacity, driver_name]
+    const { id } = req.params;
+    const vehicle = await pool.query(
+      "SELECT v.*, w.name as warehouse_name FROM vehicles v LEFT JOIN warehouses w ON v.assigned_warehouse_id = w.id WHERE v.id = $1", 
+      [id]
     );
-    res.json(newVehicle.rows[0]);
+    if (vehicle.rows.length === 0) return res.status(404).json({ error: "Vehicle not found" });
+    res.json(vehicle.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Shipments
-router.get("/shipments", async (req, res) => {
+// POST /api/transport/vehicles - Create new vehicle
+router.post("/vehicles", authenticate, async (req, res) => {
+  try {
+    const { 
+      vehicle_number, vehicle_type, capacity_kg, capacity_volume, 
+      driver_name, driver_phone, current_latitude, current_longitude, 
+      assigned_warehouse_id, status 
+    } = req.body;
+
+    const result = await pool.query(
+      `INSERT INTO vehicles (
+        vehicle_number, vehicle_type, capacity_kg, capacity_volume, 
+        driver_name, driver_phone, current_latitude, current_longitude, 
+        assigned_warehouse_id, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [
+        vehicle_number, vehicle_type, capacity_kg || 0, capacity_volume || 0, 
+        driver_name, driver_phone, current_latitude, current_longitude, 
+        assigned_warehouse_id, status || 'available'
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/transport/vehicles/:id - Update vehicle
+router.put("/vehicles/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      vehicle_number, vehicle_type, capacity_kg, capacity_volume, 
+      driver_name, driver_phone, current_latitude, current_longitude, 
+      assigned_warehouse_id, status 
+    } = req.body;
+
+    const result = await pool.query(
+      `UPDATE vehicles SET 
+        vehicle_number = $1, vehicle_type = $2, capacity_kg = $3, capacity_volume = $4, 
+        driver_name = $5, driver_phone = $6, current_latitude = $7, current_longitude = $8, 
+        assigned_warehouse_id = $9, status = $10
+      WHERE id = $11 RETURNING *`,
+      [
+        vehicle_number, vehicle_type, capacity_kg, capacity_volume, 
+        driver_name, driver_phone, current_latitude, current_longitude, 
+        assigned_warehouse_id, status, id
+      ]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Vehicle not found" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/transport/vehicles/:id - Delete vehicle
+router.delete("/vehicles/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("DELETE FROM vehicles WHERE id = $1 RETURNING *", [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Vehicle not found" });
+    res.json({ message: "Vehicle deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/transport/shipments - List all shipments
+router.get("/shipments", authenticate, async (req, res) => {
   try {
     const shipments = await pool.query(`
-      SELECT s.*, v.plate_number, v.driver_name 
+      SELECT s.*, v.vehicle_number, v.driver_name 
       FROM shipments s 
       LEFT JOIN vehicles v ON s.vehicle_id = v.id 
       ORDER BY s.id DESC
@@ -39,58 +116,5 @@ router.get("/shipments", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-router.post("/shipments", async (req, res) => {
-  try {
-    const { 
-      order_id, 
-      vehicle_id, 
-      route_details, 
-      estimated_delivery,
-      origin_lat,
-      origin_lng,
-      dest_lat,
-      dest_lng,
-      origin_name,
-      dest_name,
-      distance_km
-    } = req.body;
-
-    const newShipment = await pool.query(
-      `INSERT INTO shipments (
-        order_id, vehicle_id, route_details, estimated_delivery, 
-        origin_lat, origin_lng, dest_lat, dest_lng, 
-        origin_name, dest_name, distance_km
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [
-        order_id, vehicle_id, route_details, estimated_delivery,
-        origin_lat, origin_lng, dest_lat, dest_lng,
-        origin_name, dest_name, distance_km
-      ]
-    );
-    
-    // Update vehicle status
-    await pool.query("UPDATE vehicles SET status = 'On Trip' WHERE id = $1", [vehicle_id]);
-    res.json(newShipment.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.put("/shipments/:id/status", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { status } = req.body;
-      const update = await pool.query("UPDATE shipments SET status = $1 WHERE id = $2 RETURNING *", [status, id]);
-      
-      if (status === 'Delivered' || status === 'Cancelled') {
-        await pool.query("UPDATE vehicles SET status = 'Available' WHERE id = $1", [update.rows[0].vehicle_id]);
-      }
-      
-      res.json(update.rows[0]);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
 
 module.exports = router;

@@ -8,7 +8,7 @@ const { JWT_SECRET } = require("../middleware/auth");
 // POST /api/auth/register
 router.post("/register", async (req, res) => {
   try {
-    const { username, email, password, role, supplier_id } = req.body;
+    const { username, email, password, role, supplier_id, customer_id } = req.body;
     if (!username || !email || !password) {
       return res.status(400).json({ error: "username, email, and password are required" });
     }
@@ -26,8 +26,8 @@ router.post("/register", async (req, res) => {
     const userRole = role || "staff";
 
     const result = await pool.query(
-      "INSERT INTO users (username, email, password_hash, role, supplier_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, email, role, supplier_id, created_at",
-      [username, email, password_hash, userRole, supplier_id]
+      "INSERT INTO users (username, email, password_hash, role, supplier_id, customer_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, email, role, supplier_id, customer_id, created_at",
+      [username, email, password_hash, userRole, supplier_id, customer_id]
     );
 
     res.status(201).json(result.rows[0]);
@@ -57,14 +57,21 @@ router.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
+      { id: user.id, username: user.username, role: user.role, customer_id: user.customer_id, supplier_id: user.supplier_id },
       JWT_SECRET,
       { expiresIn: "24h" }
     );
 
     res.json({
       token,
-      user: { id: user.id, username: user.username, email: user.email, role: user.role, supplier_id: user.supplier_id },
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        email: user.email, 
+        role: user.role, 
+        supplier_id: user.supplier_id,
+        customer_id: user.customer_id
+      },
     });
   } catch (err) {
     console.error(err.message);

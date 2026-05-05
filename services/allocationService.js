@@ -1,12 +1,11 @@
 const pool = require('../db');
 
 /**
- * Automatically allocates a warehouse bin for an accepted quotation.
- * Selection Rules:
- * 1. Find available bins in active warehouses.
- * 2. Ensure enough remaining capacity for the quotation quantity.
- * 3. Prioritize bins with the lowest utilization.
- * 4. Transaction-safe to prevent race conditions.
+ * Automatically allocates warehouse bin(s) for an accepted quotation.
+ * Enhanced Logic:
+ * 1. Consolidates stock: Prioritizes bins already holding the same product.
+ * 2. Intelligent Filling: Fills bins to capacity before moving to the next.
+ * 3. Multi-Bin Splitting: Splits large quotations across multiple bins if necessary.
  */
 async function autoAllocateWarehouse(quotationId) {
   const client = await pool.connect();
@@ -27,38 +26,81 @@ async function autoAllocateWarehouse(quotationId) {
     }
 
     const quotation = quoteRes.rows[0];
-    const requiredQty = quotation.quantity;
+    let remainingQty = parseFloat(quotation.quantity);
+    const productId = quotation.product_id;
+    const category = quotation.category || '';
 
-    // 2. Find best available bin
-    // Rules: Strict Category Match for prototype automation demonstration
-    const binRes = await client.query(
-      `SELECT b.*, w.name as warehouse_name, 
-              (CAST(b.used_capacity AS FLOAT) / b.capacity) as utilization
-       FROM bins b
-       JOIN warehouses w ON b.warehouse_id = w.id
-       WHERE w.status = 'Active' 
-         AND (b.capacity - b.used_capacity) >= $1
-         AND (
-           ($2 != '' AND b.category = $2) OR 
-           ($2 = '' AND b.category IS NULL)
-         )
-       ORDER BY utilization ASC, b.id ASC
-       LIMIT 1`,
-      [requiredQty, quotation.category || '']
-    );
+    const allocations = [];
 
-    if (binRes.rows.length === 0) {
-      throw new Error('No warehouse space available');
+    // 2. Loop until all quantity is allocated
+    while (remainingQty > 0) {
+      // Find best bin:
+      // Priority 1: Bins already holding this product (consolidation)
+      // Priority 2: Bins with highest utilization (to fill them up)
+      // Must match category and have at least 1 unit of space
+      const binRes = await client.query(
+        `SELECT b.*, w.name as warehouse_name,
+                (SELECT COUNT(*) FROM warehouse_allocations wa WHERE wa.bin_id = b.id AND wa.product_id = $1) as existing_prod_count
+         FROM bins b
+         JOIN warehouses w ON b.warehouse_id = w.id
+         WHERE w.status = 'Active' 
+           AND b.capacity > b.used_capacity
+           AND (
+             ($2 != '' AND b.category = $2) OR 
+             ($2 = '' AND b.category IS NULL)
+           )
+         ORDER BY existing_prod_count DESC, (CAST(b.used_capacity AS FLOAT) / b.capacity) DESC, b.id ASC
+         LIMIT 1`,
+        [productId, category]
+      );
+
+      if (binRes.rows.length === 0) {
+        throw new Error(`Insufficient warehouse space. ${remainingQty} units remaining unallocated.`);
+      }
+
+      const bin = binRes.rows[0];
+      const availableSpace = bin.capacity - bin.used_capacity;
+      const qtyToAllocate = Math.min(remainingQty, availableSpace);
+
+      // Create Allocation Record
+      const cleanRack = bin.rack_code.replace('-', '');
+      const cleanBin = bin.bin_code.replace('-', '');
+      // Barcode must be unique, adding Quotation ID ensures this even for same bin
+      const barcodeId = `WH${bin.warehouse_id}-${cleanRack}-${cleanBin}-Q${quotationId}`;
+
+      await client.query(
+        `INSERT INTO warehouse_allocations 
+         (quotation_id, product_id, warehouse_id, bin_id, barcode_id, allocated_at, status, quantity)
+         VALUES ($1, $2, $3, $4, $5, NOW(), 'allocated', $6)`,
+        [quotationId, productId, bin.warehouse_id, bin.id, barcodeId, qtyToAllocate]
+      );
+
+      // Update Bin Capacity
+      const newUsedCapacity = bin.used_capacity + qtyToAllocate;
+      const newStatus = newUsedCapacity >= bin.capacity ? 'Occupied' : 'Reserved';
+      
+      await client.query(
+        `UPDATE bins SET used_capacity = $1, status = $2 WHERE id = $3`,
+        [newUsedCapacity, newStatus, bin.id]
+      );
+
+      allocations.push({
+        barcode_id: barcodeId,
+        warehouse: bin.warehouse_name,
+        warehouse_id: bin.warehouse_id,
+        bin: `${bin.rack_code} · ${bin.bin_code}`,
+        bin_id: bin.id,
+        qty: qtyToAllocate
+      });
+
+      remainingQty -= qtyToAllocate;
     }
 
-    const bin = binRes.rows[0];
-
-    // 3. Calculate Delivery Due Date
+    // 3. Update Quotation Status
     const acceptedAt = new Date();
     const deliveryDueAt = new Date();
     deliveryDueAt.setDate(acceptedAt.getDate() + (quotation.credit_days || 0));
 
-    // 4. Update Quotation with timestamps
     await client.query(
       `UPDATE quotations 
        SET accepted_at = $1, delivery_due_at = $2, status = 'Accepted'
@@ -66,71 +108,23 @@ async function autoAllocateWarehouse(quotationId) {
       [acceptedAt, deliveryDueAt, quotationId]
     );
 
-    // 5. Generate Barcode ID: WH{ID}-R{CODE}-B{CODE}
-    // Cleaning rack/bin codes from potential dashes for cleaner barcode
-    const cleanRack = bin.rack_code.replace('-', '');
-    const cleanBin = bin.bin_code.replace('-', '');
-    const barcodeId = `WH${bin.warehouse_id}-${cleanRack}-${cleanBin}`;
-
-    // 6. Create Allocation Record
-    await client.query(
-      `INSERT INTO warehouse_allocations 
-       (quotation_id, product_id, warehouse_id, bin_id, barcode_id, allocated_at, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'allocated')`,
-      [quotationId, quotation.product_id, bin.warehouse_id, bin.id, barcodeId, acceptedAt]
-    );
-
-    // 7. Update Bin Capacity and Status
-    const newUsedCapacity = bin.used_capacity + requiredQty;
-    const newStatus = newUsedCapacity >= bin.capacity ? 'Occupied' : 'Reserved';
-    
-    await client.query(
-      `UPDATE bins 
-       SET used_capacity = $1, status = $2 
-       WHERE id = $3`,
-      [newUsedCapacity, newStatus, bin.id]
-    );
-
-    // 8. Update Product location and Weighted Average Price
-    const prodStateRes = await client.query(
-      `SELECT stock, price FROM products WHERE id = $1`,
-      [quotation.product_id]
-    );
-    const currentProd = prodStateRes.rows[0];
-    const currentStock = parseFloat(currentProd.stock) || 0;
-    const currentPrice = parseFloat(currentProd.price) || 0;
-    const newQty = parseFloat(quotation.quantity);
-    const incomingPrice = parseFloat(quotation.unit_price);
-
-    // Weighted Average Formula: ((OldPrice * OldQty) + (NewPrice * NewQty)) / (OldQty + NewQty)
-    const totalQty = currentStock + newQty;
-    const weightedAvgPrice = totalQty > 0 
-      ? ((currentPrice * currentStock) + (incomingPrice * newQty)) / totalQty 
-      : incomingPrice;
-
+    // 4. Update Product Stock (Aggregate quantity)
     await client.query(
       `UPDATE products 
-       SET warehouse_id = $1, bin_id = $2, stock = stock + $3, price = $4
-       WHERE id = $5`,
-      [bin.warehouse_id, bin.id, newQty, weightedAvgPrice.toFixed(2), quotation.product_id]
+       SET warehouse_id = $1, bin_id = $2, stock = stock + $3
+       WHERE id = $4`,
+      [allocations[0].warehouse_id, allocations[0].bin_id, quotation.quantity, productId]
     );
 
     await client.query('COMMIT');
-    console.log(`[Allocation] Successfully allocated Quote #${quotationId} to Bin #${bin.id} (${barcodeId})`);
     
     return {
       success: true,
-      allocation: {
-        barcode_id: barcodeId,
-        warehouse: bin.warehouse_name,
-        bin: `${bin.rack_code} · ${bin.bin_code}`,
-        due_at: deliveryDueAt
-      }
+      allocations
     };
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(`[Allocation Error] Quote #${quotationId}: ${err.message}`);
     throw err;
   } finally {
     client.release();
