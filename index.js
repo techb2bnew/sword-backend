@@ -6,6 +6,7 @@ const authRoutes = require("./routes/auth");
 const usersRoutes = require("./routes/users");
 const financeRoutes = require("./routes/finance");
 const inventoryRoutes = require("./routes/inventory");
+const advancedInventoryRoutes = require("./routes/advanced-inventory");
 const warehouseRoutes = require("./routes/warehouse");
 const salesRoutes = require("./routes/sales");
 const reportingRoutes = require("./routes/reporting");
@@ -38,6 +39,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/inventory", inventoryRoutes); // Using this for products
+app.use("/api/inventory", advancedInventoryRoutes); // Batch, cycle count, barcode scanning
 app.use("/api/warehouse", warehouseRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/reporting", reportingRoutes);
@@ -61,5 +63,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-setInterval(() => {}, 10000);
